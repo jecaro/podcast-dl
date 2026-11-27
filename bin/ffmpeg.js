@@ -13,6 +13,23 @@ import {
 } from "./util.js";
 
 const VIDEO_ATTACHED_PIC_EXTS = new Set([".mov", ".mp4"]);
+// MP4/MOV muxers only accept JPEG or PNG artwork as stream copy.
+const MP4_FAMILY_EXTS = new Set([".m4a", ".mov", ".mp4"]);
+const JPEG_SIGNATURE = Buffer.from([0xff, 0xd8, 0xff]);
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+const isJpegOrPng = (imagePath) => {
+  const header = Buffer.alloc(PNG_SIGNATURE.length);
+  const fd = fs.openSync(imagePath, "r");
+  try {
+    fs.readSync(fd, header, 0, header.length, 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return (
+    header.subarray(0, JPEG_SIGNATURE.length).equals(JPEG_SIGNATURE) || header.equals(PNG_SIGNATURE)
+  );
+};
 
 export const runFfmpeg = async ({
   audioFormat,
@@ -42,6 +59,9 @@ export const runFfmpeg = async ({
   const shouldEmbedImage = embedMetadata && episodeImageOutputPath && supportsAttachedPic;
   const shouldCopyVideo = shouldEmbedImage || (embedMetadata && (bitrate || mono) && !targetFormat);
   const shouldMarkAttachedPic = shouldEmbedImage && supportsAttachedPic;
+  const imageStreamIndex = keepVideo ? 1 : 0;
+  const shouldEncodeImage =
+    shouldEmbedImage && MP4_FAMILY_EXTS.has(outputExt) && !isJpegOrPng(episodeImageOutputPath);
 
   const args = ["-nostdin", "-y", "-loglevel", "quiet", "-i", outputPath];
 
@@ -67,8 +87,12 @@ export const runFfmpeg = async ({
     args.push("-c:v", "copy");
   }
 
+  if (shouldEncodeImage) {
+    args.push(`-c:v:${imageStreamIndex}`, "mjpeg");
+  }
+
   if (shouldMarkAttachedPic) {
-    args.push(`-disposition:v:${keepVideo ? 1 : 0}`, "attached_pic");
+    args.push(`-disposition:v:${imageStreamIndex}`, "attached_pic");
   }
 
   if (embedMetadata) {

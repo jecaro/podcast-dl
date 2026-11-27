@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 let testDirectory;
 let ffmpegOutputPath;
 
+const JPEG_HEADER = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+const WEBP_HEADER = Buffer.from("RIFF\0\0\0\0WEBP");
+
 const loadRunFfmpeg = async ({ reject = false } = {}) => {
   vi.resetModules();
 
@@ -92,7 +95,7 @@ describe("runFfmpeg", () => {
     const sourcePath = path.join(testDirectory, "episode.mp3");
     const imagePath = path.join(testDirectory, "cover.jpg");
     fs.writeFileSync(sourcePath, "source audio");
-    fs.writeFileSync(imagePath, "image");
+    fs.writeFileSync(imagePath, JPEG_HEADER);
     const { feed, item } = createFeedAndItem();
     item.contentSnippet = "It's $5 & worth it";
     item.itunes = { subtitle: "A subtitle (with punctuation)" };
@@ -139,7 +142,7 @@ describe("runFfmpeg", () => {
     const sourcePath = path.join(testDirectory, "episode.mp4");
     const imagePath = path.join(testDirectory, "cover.jpg");
     fs.writeFileSync(sourcePath, "source video");
-    fs.writeFileSync(imagePath, "image");
+    fs.writeFileSync(imagePath, JPEG_HEADER);
     const { feed, item } = createFeedAndItem();
     const { runFfmpeg, spawnWithPromise } = await loadRunFfmpeg();
 
@@ -165,7 +168,7 @@ describe("runFfmpeg", () => {
     const sourcePath = path.join(testDirectory, "episode.webm");
     const imagePath = path.join(testDirectory, "cover.jpg");
     fs.writeFileSync(sourcePath, "source video");
-    fs.writeFileSync(imagePath, "image");
+    fs.writeFileSync(imagePath, JPEG_HEADER);
     const { feed, item } = createFeedAndItem();
     const { runFfmpeg, spawnWithPromise } = await loadRunFfmpeg();
 
@@ -188,7 +191,7 @@ describe("runFfmpeg", () => {
     const sourcePath = path.join(testDirectory, "episode.mp3");
     const imagePath = path.join(testDirectory, "cover.jpg");
     fs.writeFileSync(sourcePath, "source audio");
-    fs.writeFileSync(imagePath, "image");
+    fs.writeFileSync(imagePath, JPEG_HEADER);
     const { feed, item } = createFeedAndItem();
     const { runFfmpeg, spawnWithPromise } = await loadRunFfmpeg();
 
@@ -207,11 +210,58 @@ describe("runFfmpeg", () => {
     expect(args.slice(-5)).toEqual(["-map", "0:a", "-map", "1", ffmpegOutputPath]);
   });
 
+  it("copies JPEG artwork into an m4a file without re-encoding", async () => {
+    const sourcePath = path.join(testDirectory, "episode.m4a");
+    const imagePath = path.join(testDirectory, "cover.jpg");
+    fs.writeFileSync(sourcePath, "source audio");
+    fs.writeFileSync(imagePath, JPEG_HEADER);
+    const { feed, item } = createFeedAndItem();
+    const { runFfmpeg, spawnWithPromise } = await loadRunFfmpeg();
+
+    await runFfmpeg({
+      embedMetadata: true,
+      episodeImageOutputPath: imagePath,
+      feed,
+      item,
+      itemIndex: 0,
+      outputPath: sourcePath,
+    });
+
+    const args = spawnWithPromise.mock.calls[0][1];
+    expect(args).not.toContain("mjpeg");
+  });
+
+  it.each([
+    ["episode.m4a", "-c:v:0"],
+    ["episode.mp4", "-c:v:1"],
+  ])("re-encodes WebP artwork to mjpeg for %s", async (fileName, codecOption) => {
+    const sourcePath = path.join(testDirectory, fileName);
+    const imagePath = path.join(testDirectory, "cover.webp");
+    fs.writeFileSync(sourcePath, "source media");
+    fs.writeFileSync(imagePath, WEBP_HEADER);
+    const { feed, item } = createFeedAndItem();
+    const { runFfmpeg, spawnWithPromise } = await loadRunFfmpeg();
+
+    await runFfmpeg({
+      embedMetadata: true,
+      episodeImageOutputPath: imagePath,
+      feed,
+      item,
+      itemIndex: 0,
+      outputPath: sourcePath,
+    });
+
+    const args = spawnWithPromise.mock.calls[0][1];
+    const codecIndex = args.indexOf(codecOption);
+    expect(args[codecIndex + 1]).toBe("mjpeg");
+    expect(codecIndex).toBeGreaterThan(args.indexOf("copy"));
+  });
+
   it("extracts only the audio when converting a video file to an audio format", async () => {
     const sourcePath = path.join(testDirectory, "episode.mp4");
     const imagePath = path.join(testDirectory, "cover.jpg");
     fs.writeFileSync(sourcePath, "source video");
-    fs.writeFileSync(imagePath, "image");
+    fs.writeFileSync(imagePath, JPEG_HEADER);
     const { feed, item } = createFeedAndItem();
     const { runFfmpeg, spawnWithPromise } = await loadRunFfmpeg();
 
